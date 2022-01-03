@@ -91,18 +91,105 @@ func (op LUI) String() string {
 	return fmt.Sprint("lui ", IntRegNames[op.rd], ",", op.imm)
 }
 
+// AUIPC
+type AUIPC struct {
+	rd  uint32
+	imm uint32
+}
+
+func (op AUIPC) Execute(core *Core) {
+	value := core.pc + op.imm
+	core.reg.Write(op.rd, value)
+}
+
+func (op AUIPC) String() string {
+	return fmt.Sprint("auipc ", IntRegNames[op.rd], ",", op.imm)
+}
+
+// JAL
+type JAL struct {
+	rd  uint32
+	imm uint32
+}
+
+func (op JAL) Execute(core *Core) {
+	nextPc := core.nextPc
+
+	core.nextPc = core.pc + op.imm
+	core.reg.Write(op.rd, nextPc)
+}
+
+func (op JAL) String() string {
+	if op.rd == 0 {
+		return fmt.Sprint("j ", op.imm)
+	} else {
+		return fmt.Sprint("jal ", IntRegNames[op.rd], ",", op.imm)
+	}
+}
+
+// JALR
+type JALR struct {
+	rd  uint32
+	rs1 uint32
+	imm uint32
+}
+
+func (op JALR) Execute(core *Core) {
+	nextPc := core.nextPc
+	src1 := core.reg.Read(op.rs1)
+
+	core.nextPc = src1 + op.imm
+	core.reg.Write(op.rd, nextPc)
+}
+
+func (op JALR) String() string {
+	if op.rd == 0 {
+		return fmt.Sprint("jr ", IntRegNames[op.rs1], ",", op.imm)
+	} else {
+		return fmt.Sprint("jalr ", IntRegNames[op.rd], ",", IntRegNames[op.rs1], ",", op.imm)
+	}
+}
+
 // Emulation logic
 func pick(data uint32, lsb uint32, width uint32) uint32 {
 	return (data >> lsb) & ((1 << width) - 1)
 }
 
+func signExtend(width uint32, value uint32) uint32 {
+	sign := (value >> (width - uint32(1))) & uint32(1)
+	mask := (uint32(1) << width) - uint32(1)
+
+	if sign == 0 {
+		return value & mask
+	} else {
+		return value | (mask ^ 0xffffffff)
+	}
+}
+
 func decode(insn uint32) Op {
 	funct7 := pick(insn, 0, 7)
+	rd := pick(insn, 7, 5)
+	funct3 := pick(insn, 12, 3)
+	rs1 := pick(insn, 15, 5)
 
 	if funct7 == 0b0110111 {
-		rd := pick(insn, 7, 5)
 		imm := pick(insn, 12, 20)
 		return LUI{rd: rd, imm: imm}
+	}
+	if funct7 == 0b0010111 {
+		imm := pick(insn, 12, 20)
+		return AUIPC{rd: rd, imm: imm}
+	}
+	if funct7 == 0b1101111 {
+		imm := signExtend(21, pick(insn, 31, 1)<<20|
+			pick(insn, 21, 10)<<1|
+			pick(insn, 20, 1)<<11|
+			pick(insn, 12, 8)<<12)
+		return JAL{rd: rd, imm: imm}
+	}
+	if funct7 == 0b1100111 && funct3 == 0b000 {
+		imm := signExtend(12, pick(insn, 20, 12))
+		return JALR{rd: rd, rs1: rs1, imm: imm}
 	}
 
 	return UnknownOp{}
